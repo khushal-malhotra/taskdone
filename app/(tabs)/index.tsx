@@ -1,70 +1,208 @@
-import { Image, StyleSheet, Platform } from 'react-native';
+import { useState, useEffect, useRef } from 'react';
+import { Text, View, Button, Platform, Alert } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { TextInput } from 'react-native-gesture-handler';
 
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+Notifications.setNotificationHandler({
+	handleNotification: async () => ({
+		shouldShowAlert: true,
+		shouldPlaySound: true,
+		shouldSetBadge: false,
+	}),
+});
 
-export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({ ios: 'cmd + d', android: 'cmd + m' })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-        <ThemedText>
-          Tap the Explore tab to learn more about what's included in this starter app.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          When you're ready, run{' '}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
-  );
+export default function App() {
+	const getDefaultTime = () => {
+		const now = new Date();
+		now.setMinutes(now.getMinutes() + 1);
+		const hours = String(now.getHours()).padStart(2, '0');
+		const minutes = String(now.getMinutes()).padStart(2, '0');
+		return `${hours}:${minutes}`;
+	};
+
+	const [formData, setFormData] = useState({
+		message: ' This is default notification message',
+		time: getDefaultTime(),
+	});
+
+	const handleInputChange = (key: any, value: any) => {
+		setFormData((prevData) => ({
+			...prevData,
+			[key]: value,
+		}));
+	};
+	const [channels, setChannels] = useState<Notifications.NotificationChannel[]>(
+		[]
+	);
+	const [notification, setNotification] = useState<
+		Notifications.Notification | undefined
+	>(undefined);
+	const notificationListener = useRef<Notifications.Subscription>();
+	const responseListener = useRef<Notifications.Subscription>();
+
+	useEffect(() => {
+		if (Platform.OS === 'android') {
+			Notifications.getNotificationChannelsAsync().then((value) =>
+				setChannels(value ?? [])
+			);
+		}
+		notificationListener.current =
+			Notifications.addNotificationReceivedListener((notification) => {
+				setNotification(notification);
+			});
+
+		responseListener.current =
+			Notifications.addNotificationResponseReceivedListener((response) => {
+				console.log(response);
+			});
+
+		return () => {
+			notificationListener.current &&
+				Notifications.removeNotificationSubscription(
+					notificationListener.current
+				);
+			responseListener.current &&
+				Notifications.removeNotificationSubscription(responseListener.current);
+		};
+	}, []);
+
+	const resetTime = () => {
+		setFormData((prevData) => ({
+			...prevData,
+			time: getDefaultTime(),
+		}));
+	};
+
+	const saveDataAndScheduleNotification = async () => {
+		const { message, time } = formData;
+
+		console.log(message, time);
+
+		// Validate input
+		if (!message || !time) {
+			Alert.alert('Error', 'Please fill in all fields');
+			return;
+		}
+
+		try {
+			// Save data to AsyncStorage
+			await AsyncStorage.setItem('formData', JSON.stringify(formData));
+
+			// Schedule notification
+			const [hours, minutes] = time.split(':').map(Number);
+			const notificationTime = new Date();
+			notificationTime.setHours(hours);
+			notificationTime.setMinutes(minutes);
+			notificationTime.setSeconds(0);
+
+			const triggerInSeconds = Math.floor(
+				(notificationTime.getTime() - new Date().getTime()) / 1000
+			);
+
+			if (triggerInSeconds > 0) {
+				await Notifications.scheduleNotificationAsync({
+					content: {
+						title: 'Scheduled Notification',
+						body: message,
+						sound: './assets/sounds/magic-notification-sound.wav',
+						interruptionLevel: 'critical',
+					},
+					trigger: { seconds: triggerInSeconds },
+				});
+				Alert.alert(
+					'Notification Scheduled',
+					`Notification will be sent at ${time}`
+				);
+			} else {
+				Alert.alert('Error', 'Time must be in the future');
+			}
+		} catch (error) {
+			console.error('Error storing data or scheduling notification', error);
+			Alert.alert('Error', 'An error occurred');
+		}
+	};
+
+	return (
+		<View
+			style={{
+				flex: 1,
+				alignItems: 'center',
+				justifyContent: 'space-around',
+			}}
+		>
+			<Text style={{ color: 'red' }}>{`Channels: ${JSON.stringify(
+				channels.map((c) => c.id),
+				null,
+				2
+			)}`}</Text>
+			<View style={{ alignItems: 'center', justifyContent: 'center' }}>
+				<Text style={{ color: 'red' }}>
+					Title: {notification && notification.request.content.title}{' '}
+				</Text>
+				<Text style={{ color: 'red' }}>
+					Body: {notification && notification.request.content.body}
+				</Text>
+				<Text style={{ color: 'red' }}>
+					Data:{' '}
+					{notification && JSON.stringify(notification.request.content.data)}
+				</Text>
+			</View>
+			<Button
+				title="Press to schedule a notification"
+				onPress={async () => {
+					await schedulePushNotification();
+				}}
+			/>
+			<View style={{ flex: 1, justifyContent: 'center', padding: 20 }}>
+				<Text style={{ marginBottom: 10, color: 'red' }}>Enter Message:</Text>
+				<TextInput
+					style={{
+						borderWidth: 1,
+						borderColor: '#ccc',
+						padding: 10,
+						marginBottom: 20,
+						borderRadius: 5,
+						color: 'white',
+					}}
+					placeholder="Message"
+					onChangeText={(text) => handleInputChange('message', text)}
+					value={formData.message}
+				/>
+
+				<Text style={{ marginBottom: 10, color: 'red' }}>
+					Enter Time (in HH:MM format):
+				</Text>
+				<TextInput
+					style={{
+						borderWidth: 1,
+						borderColor: '#ccc',
+						padding: 10,
+						marginBottom: 20,
+						borderRadius: 5,
+						color: 'white',
+					}}
+					placeholder="Time (e.g., 15:30)"
+					onChangeText={(text) => handleInputChange('time', text)}
+					value={formData.time}
+				/>
+
+				<Button title="Submit" onPress={saveDataAndScheduleNotification} />
+				<Button title="Reset" onPress={resetTime} />
+			</View>
+		</View>
+	);
 }
 
-const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
-});
+async function schedulePushNotification() {
+	await Notifications.scheduleNotificationAsync({
+		content: {
+			title: "You've got message 📬",
+			body: 'Here is the notification body',
+			data: { data: 'goes here', test: { test1: 'more data' } },
+			sound: './assets/sounds/magic-notification-sound.wav',
+			interruptionLevel: 'critical',
+		},
+		trigger: { seconds: 5 },
+	});
+}
